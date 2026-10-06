@@ -5,54 +5,105 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Swarm Post Formatter</title>
 <style>
-  body { font-family: -apple-system, sans-serif; padding: 20px; max-width: 500px; margin: auto; }
-  input, textarea, button { width: 100%; box-sizing: border-box; margin-top: 10px; font-size: 16px; }
-  textarea { height: 100px; }
-  button { padding: 12px; background: #007aff; color: white; border: none; border-radius: 6px; font-weight: bold; }
+  body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; padding: 24px; max-width: 520px; margin: auto; color: #333; }
+  h3 { margin-top: 0; }
+  input, textarea, button { width: 100%; box-sizing: border-box; margin-top: 12px; font-size: 16px; border-radius: 8px; }
+  input { padding: 12px; border: 1px solid #ccc; }
+  textarea { height: 110px; padding: 12px; border: 1px solid #ccc; line-height: 1.5; font-family: inherit; }
+  button { padding: 14px; background: #fa698d; color: white; border: none; font-weight: bold; cursor: pointer; }
+  button:active { opacity: 0.8; }
+  #status { margin-top: 10px; font-size: 13px; color: #666; min-height: 18px; }
 </style>
 </head>
 <body>
+
 <h3>Swarm 共有テキスト復元</h3>
 <input type="text" id="urlInput" placeholder="Swarm / Foursquare のURLを貼り付け">
-<button onclick="formatPost()">変換・コピー</button>
-<textarea id="resultText" placeholder="ここに生成されます"></textarea>
+<button onclick="formatPost()">変換してクリップボードにコピー</button>
+<div id="status"></div>
+<textarea id="resultText" placeholder="ここに生成されます" readonly></textarea>
 
 <script>
+async function fetchHtmlWithFallback(targetUrl) {
+  // 複数のプロキシ候補
+  const proxies = [
+    url => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
+    url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+    url => `https://corsproxy.io/?url=${encodeURIComponent(url)}`
+  ];
+
+  let lastError = null;
+  for (const makeProxyUrl of proxies) {
+    try {
+      const pUrl = makeProxyUrl(targetUrl);
+      const res = await fetch(pUrl, { cache: 'no-cache' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const text = await res.text();
+      if (text && text.includes('<html') || text.includes('og:title')) {
+        return text;
+      }
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  throw lastError || new Error("全プロキシからの取得に失敗しました");
+}
+
 async function formatPost() {
+  const statusDiv = document.getElementById('status');
+  const resultArea = document.getElementById('resultText');
   const rawUrl = document.getElementById('urlInput').value.trim();
+
   const m = rawUrl.match(/(foursquare\.com|swarmapp\.com)\/user\/(\d+)\/checkin\/([a-zA-Z0-9]+)/);
   if (!m) {
-    alert("URLの形式が正しくありません");
+    alert("Swarm / Foursquare のチェックインURLが見つかりません");
     return;
   }
-  const cleanUrl = `https://www.swarmapp.com/user/${m[2]}/checkin/${m[3]}`;
-  
-  // CORS回避用プロキシ
-  const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(cleanUrl)}`;
-  
+
+  const userId = m[2];
+  const checkinId = m[3];
+  const cleanUrl = `https://www.swarmapp.com/user/${userId}/checkin/${checkinId}`;
+
+  statusDiv.textContent = "チェックイン情報を解析中...";
+
   try {
-    const res = await fetch(proxyUrl);
-    const data = await res.json();
+    const htmlText = await fetchHtmlWithFallback(cleanUrl);
     const parser = new DOMParser();
-    const doc = parser.parseFromString(data.contents, 'text/html');
+    const doc = parser.parseFromString(htmlText, 'text/html');
 
     const titleMeta = doc.querySelector('meta[property="og:title"]');
     const descMeta = doc.querySelector('meta[property="og:description"]');
 
-    let venue = titleMeta ? titleMeta.content : "";
-    venue = venue.replace(/^.*?checked in at\s+/i, '').replace(/^.*?at\s+/i, '').trim();
+    let rawTitle = titleMeta ? (titleMeta.content || "") : "";
+    // 不要な接頭辞をトリム
+    let venue = rawTitle.replace(/^.*?checked in at\s+/i, '').replace(/^.*?at\s+/i, '').trim();
 
-    const loc = descMeta ? descMeta.content.trim() : "";
+    let loc = descMeta ? (descMeta.content || "").trim() : "";
 
-    const output = loc ? `I was at ${venue} in ${loc} ${cleanUrl}` : `I was at ${venue} ${cleanUrl}`;
-    
-    document.getElementById('resultText').value = output;
-    await navigator.clipboard.writeText(output);
-    alert("クリップボードにコピーしました！");
+    if (!venue) {
+      // metaタグが取れなかったときのフォールバック（<title>から）
+      const docTitle = doc.querySelector('title') ? doc.querySelector('title').innerText : "";
+      venue = docTitle.split(' - ')[0] || "ここ";
+    }
+
+    const output = loc 
+      ? `I was at ${venue} in ${loc} ${cleanUrl}` 
+      : `I was at ${venue} ${cleanUrl}`;
+
+    resultArea.value = output;
+    statusDiv.textContent = "✅ コピー完了！";
+
+    // クリップボード書き込み
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(output);
+    }
+
   } catch (e) {
-    alert("取得に失敗しました: " + e);
+    statusDiv.textContent = "❌ エラーが発生しました";
+    alert("取得に失敗しました: " + e.message);
   }
 }
 </script>
+
 </body>
 </html>
