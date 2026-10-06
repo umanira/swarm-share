@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Swarm Post Formatter</title>
+<style>
+  body { font-family: -apple-system, sans-serif; padding: 20px; max-width: 500px; margin: auto; }
+  input, textarea, button { width: 100%; box-sizing: border-box; margin-top: 10px; font-size: 16px; }
+  textarea { height: 100px; }
+  button { padding: 12px; background: #007aff; color: white; border: none; border-radius: 6px; font-weight: bold; }
+</style>
+</head>
+<body>
+<h3>Swarm 共有テキスト復元</h3>
+<input type="text" id="urlInput" placeholder="Swarm / Foursquare のURLを貼り付け">
+<button onclick="formatPost()">変換・コピー</button>
+<textarea id="resultText" placeholder="ここに生成されます"></textarea>
+
+<script>
+async function formatPost() {
+  const rawUrl = document.getElementById('urlInput').value.trim();
+  const m = rawUrl.match(/(foursquare\.com|swarmapp\.com)\/user\/(\d+)\/checkin\/([a-zA-Z0-9]+)/);
+  if (!m) {
+    alert("URLの形式が正しくありません");
+    return;
+  }
+  const cleanUrl = `https://www.swarmapp.com/user/${m[2]}/checkin/${m[3]}`;
+  
+  // CORS回避用プロキシ
+  const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(cleanUrl)}`;
+  
+  try {
+    const res = await fetch(proxyUrl);
+    const data = await res.json();
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(data.contents, 'text/html');
+
+    const titleMeta = doc.querySelector('meta[property="og:title"]');
+    const descMeta = doc.querySelector('meta[property="og:description"]');
+
+    let venue = titleMeta ? titleMeta.content : "";
+    venue = venue.replace(/^.*?checked in at\s+/i, '').replace(/^.*?at\s+/i, '').trim();
+
+    const loc = descMeta ? descMeta.content.trim() : "";
+
+    const output = loc ? `I was at ${venue} in ${loc} ${cleanUrl}` : `I was at ${venue} ${cleanUrl}`;
+    
+    document.getElementById('resultText').value = output;
+    await navigator.clipboard.writeText(output);
+    alert("クリップボードにコピーしました！");
+  } catch (e) {
+    alert("取得に失敗しました: " + e);
+  }
+}
+</script>
+</body>
+</html>
